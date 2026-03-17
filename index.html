@@ -12,6 +12,8 @@
             --text-color: #cdd6f4;
             --accent-color: #89b4fa;
             --button-hover: #b4befe;
+            --accent-green: #a6e3a1;
+            --green-hover: #89dceb;
         }
 
         body {
@@ -91,12 +93,22 @@
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
-            font-size: 1rem;
+            font-size: 0.95rem;
             transition: background-color 0.2s;
         }
 
         button:hover {
             background-color: var(--button-hover);
+        }
+
+        .btn-stl {
+            background-color: var(--accent-green);
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-stl:hover {
+            background-color: var(--green-hover);
         }
 
         /* Checkerboard background to demonstrate transparency */
@@ -145,13 +157,14 @@
             </div>
         </div>
 
-        <button onclick="generateQR()">Generate</button>
+        <button onclick="generateQR()">Generate QR Image</button>
 
         <div id="outputContainer" style="display: none;">
             <div class="preview-wrapper" id="svgPreview"></div>
             <div class="actions">
                 <button onclick="downloadSVG()">Download SVG</button>
                 <button onclick="downloadPNG()">Download PNG</button>
+                <button class="btn-stl" onclick="downloadSTL()">Download STL (1mm Thick)</button>
             </div>
         </div>
     </div>
@@ -159,11 +172,11 @@
     <script>
         let currentSvgData = "";
         let currentCanvas = null;
+        let currentStlData = { modules: [], border: null };
 
         function updateControls() {
             document.getElementById('noiseVal').innerText = document.getElementById('noiseInput').value;
             document.getElementById('borderVal').innerText = document.getElementById('borderInput').value;
-            // Auto-regenerate when sliders move for instant feedback
             if(document.getElementById('outputContainer').style.display !== 'none') {
                 generateQR();
             }
@@ -175,16 +188,12 @@
                 const noiseChunkSize = parseInt(document.getElementById('noiseInput').value, 10);
                 const borderWidth = parseInt(document.getElementById('borderInput').value, 10);
 
-                // 1. Generate the core QR code matrix
                 const qr = qrcode(0, 'M'); 
                 qr.addData(url);
                 qr.make();
 
                 const qrSize = qr.getModuleCount();
                 const coreSize = qrSize; 
-
-                // 2. Calculate bounds for the surrounding circle
-                // Give the QR core a safe buffer padding, scaling slightly with border size
                 const padding = Math.max(1, borderWidth);
                 const radius = Math.ceil((coreSize * Math.sqrt(2)) / 2) + padding; 
                 const diameter = radius * 2;
@@ -194,16 +203,16 @@
                 let pathData = "";
                 const cellSize = 10; 
 
-                // Setup hidden canvas for PNG export
                 const canvas = document.createElement('canvas');
                 canvas.width = diameter * cellSize;
                 canvas.height = diameter * cellSize;
                 const ctx = canvas.getContext('2d');
                 
-                // 3. Dictionary to store our random chunks
                 const noiseMap = {};
+                
+                // Reset STL tracking data
+                currentStlData = { modules: [], border: null };
 
-                // 4. Iterate over the circular grid
                 for (let y = 0; y < diameter; y++) {
                     for (let x = 0; x < diameter; x++) {
                         
@@ -211,23 +220,17 @@
                         const qx = x - offset;
                         const qy = y - offset;
 
-                        // Check if we are inside the core QR code boundary
                         if (qx >= 0 && qx < qrSize && qy >= 0 && qy < qrSize) {
                             isDark = qr.isDark(qy, qx);
                         } else {
-                            // Measure distance to ensure noise doesn't poke out
                             const d1 = Math.hypot(x - center, y - center);
                             const d2 = Math.hypot(x + 1 - center, y - center);
                             const d3 = Math.hypot(x - center, y + 1 - center);
                             const d4 = Math.hypot(x + 1 - center, y + 1 - center);
                             const maxDist = Math.max(d1, d2, d3, d4);
-
-                            // If there is a border, we stop drawing noise halfway into the border stroke
-                            // If border is 0, we draw noise right up to the maximum radius
                             const limit = borderWidth > 0 ? (radius - borderWidth / 2) : radius;
 
                             if (maxDist <= limit) {
-                                // Group logic for adjustable chunky noise
                                 const chunkX = Math.floor(x / noiseChunkSize);
                                 const chunkY = Math.floor(y / noiseChunkSize);
                                 const chunkKey = `${chunkX},${chunkY}`;
@@ -243,30 +246,38 @@
                             pathData += `M${x * cellSize},${y * cellSize} h${cellSize} v${cellSize} h-${cellSize} Z `;
                             ctx.fillStyle = "#000000";
                             ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                            
+                            // Save geometry for the STL exporter
+                            currentStlData.modules.push({x: x, y: y});
                         }
                     }
                 }
 
-                // 5. Calculate and draw the smooth outer border ring (if width > 0)
                 let borderSvg = "";
                 if (borderWidth > 0) {
                     const ringCenterPx = center * cellSize;
                     const ringRadiusPx = (radius - borderWidth / 2) * cellSize;
                     const ringStrokeWidthPx = borderWidth * cellSize;
 
-                    // Canvas
                     ctx.beginPath();
                     ctx.arc(ringCenterPx, ringCenterPx, ringRadiusPx, 0, Math.PI * 2);
                     ctx.lineWidth = ringStrokeWidthPx;
                     ctx.strokeStyle = "#000000";
                     ctx.stroke();
 
-                    // SVG element
                     borderSvg = `<circle cx="${ringCenterPx}" cy="${ringCenterPx}" r="${ringRadiusPx}" fill="none" stroke="#000000" stroke-width="${ringStrokeWidthPx}" />`;
+                    
+                    // Save border parameters for STL
+                    currentStlData.border = {
+                        cx: center,
+                        cy: center,
+                        rInner: radius - borderWidth,
+                        rOuter: radius
+                    };
                 }
 
-                // 6. Render SVG output
-                currentSvgData = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diameter * cellSize} ${diameter * cellSize}" width="250" height="250">
+                // Changed width/height to 100% to fix mobile SVG zoom bug
+                currentSvgData = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diameter * cellSize} ${diameter * cellSize}" width="100%" height="100%">
                     <path fill="#000000" d="${pathData}" />
                     ${borderSvg}
                 </svg>`;
@@ -304,7 +315,86 @@
             document.body.removeChild(a);
         }
 
-        // Generate default on load
+        // --- Custom Client-Side STL Generator ---
+        function downloadSTL() {
+            if (!currentStlData || currentStlData.modules.length === 0) return;
+            
+            // Generate ASCII STL file structure
+            let stlString = "solid RoundQR\n";
+            
+            // Helper to write a triangle
+            function addFacet(v1, v2, v3) {
+                stlString += `facet normal 0 0 0\nouter loop\nvertex ${v1[0]} ${v1[1]} ${v1[2]}\nvertex ${v2[0]} ${v2[1]} ${v2[2]}\nvertex ${v3[0]} ${v3[1]} ${v3[2]}\nendloop\nendfacet\n`;
+            }
+
+            // Helper to generate a 1mm thick 3D cube from a 2D grid square
+            function addCube(x, y, size, zHeight) {
+                const x2 = x + size, y2 = y + size;
+                // Top
+                addFacet([x, y, zHeight], [x2, y, zHeight], [x2, y2, zHeight]);
+                addFacet([x, y, zHeight], [x2, y2, zHeight], [x, y2, zHeight]);
+                // Bottom
+                addFacet([x, y, 0], [x2, y2, 0], [x2, y, 0]);
+                addFacet([x, y, 0], [x, y2, 0], [x2, y2, 0]);
+                // Front
+                addFacet([x, y2, 0], [x2, y2, 0], [x2, y2, zHeight]);
+                addFacet([x, y2, 0], [x2, y2, zHeight], [x, y2, zHeight]);
+                // Back
+                addFacet([x, y, 0], [x2, y, zHeight], [x2, y, 0]);
+                addFacet([x, y, 0], [x, y, zHeight], [x2, y, zHeight]);
+                // Left
+                addFacet([x, y, 0], [x, y2, zHeight], [x, y2, 0]);
+                addFacet([x, y, 0], [x, y, zHeight], [x, y2, zHeight]);
+                // Right
+                addFacet([x2, y, 0], [x2, y2, 0], [x2, y2, zHeight]);
+                addFacet([x2, y, 0], [x2, y2, zHeight], [x2, y, zHeight]);
+            }
+
+            // 1. Generate geometry for all QR blocks (1mm x 1mm x 1mm)
+            currentStlData.modules.forEach(m => addCube(m.x, m.y, 1, 1));
+
+            // 2. Generate geometry for the smooth outer border (if present)
+            if (currentStlData.border) {
+                const b = currentStlData.border;
+                const segs = 72; // Smoothness of the circle
+                for(let i = 0; i < segs; i++) {
+                    const a1 = (i / segs) * Math.PI * 2;
+                    const a2 = ((i + 1) / segs) * Math.PI * 2;
+                    
+                    const x1i = b.cx + Math.cos(a1) * b.rInner, y1i = b.cy + Math.sin(a1) * b.rInner;
+                    const x1o = b.cx + Math.cos(a1) * b.rOuter, y1o = b.cy + Math.sin(a1) * b.rOuter;
+                    const x2i = b.cx + Math.cos(a2) * b.rInner, y2i = b.cy + Math.sin(a2) * b.rInner;
+                    const x2o = b.cx + Math.cos(a2) * b.rOuter, y2o = b.cy + Math.sin(a2) * b.rOuter;
+
+                    // Top
+                    addFacet([x1i, y1i, 1], [x1o, y1o, 1], [x2o, y2o, 1]);
+                    addFacet([x1i, y1i, 1], [x2o, y2o, 1], [x2i, y2i, 1]);
+                    // Bottom
+                    addFacet([x1i, y1i, 0], [x2o, y2o, 0], [x1o, y1o, 0]);
+                    addFacet([x1i, y1i, 0], [x2i, y2i, 0], [x2o, y2o, 0]);
+                    // Inner Wall
+                    addFacet([x1i, y1i, 0], [x1i, y1i, 1], [x2i, y2i, 1]);
+                    addFacet([x1i, y1i, 0], [x2i, y2i, 1], [x2i, y2i, 0]);
+                    // Outer Wall
+                    addFacet([x1o, y1o, 0], [x2o, y2o, 0], [x2o, y2o, 1]);
+                    addFacet([x1o, y1o, 0], [x2o, y2o, 1], [x1o, y1o, 1]);
+                }
+            }
+            
+            stlString += "endsolid RoundQR\n";
+            
+            // Trigger browser download for the text payload
+            const blob = new Blob([stlString], {type: 'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'round-qr-print.stl';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
         window.onload = generateQR;
     </script>
 </body>
