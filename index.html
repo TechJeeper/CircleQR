@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Round QR Code Generator</title>
+    <title>Round QR Code Generator - Print Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
     <style>
         :root {
@@ -93,7 +93,7 @@
 <body>
 
     <div class="container">
-        <h2>Round QR Code Generator</h2>
+        <h2>Round QR Generator (3D Print Optimized)</h2>
         <input type="text" id="urlInput" placeholder="Enter URL (e.g., https://example.com)" value="https://example.com" />
         <br>
         <button onclick="generateQR()">Generate</button>
@@ -112,4 +112,94 @@
         let currentCanvas = null;
 
         function generateQR() {
-            const url = document.getElementById('urlInput').value.trim() || 'https://example
+            try {
+                const url = document.getElementById('urlInput').value.trim() || 'https://example.com';
+
+                // 1. Generate the core QR code matrix (Medium error correction for blockier output)
+                const qr = qrcode(0, 'M'); 
+                qr.addData(url);
+                qr.make();
+
+                const qrSize = qr.getModuleCount();
+                const coreSize = qrSize; // No quiet zone
+
+                // 2. Calculate bounds for the surrounding circle
+                const radius = Math.ceil((coreSize * Math.sqrt(2)) / 2) + 1; 
+                const diameter = radius * 2;
+                const center = radius;
+                const offset = Math.floor((diameter - coreSize) / 2);
+
+                let pathData = "";
+                const cellSize = 10; 
+
+                // Setup hidden canvas for PNG export
+                const canvas = document.createElement('canvas');
+                canvas.width = diameter * cellSize;
+                canvas.height = diameter * cellSize;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = "#000000"; 
+
+                // 3. Dictionary to store our 2x2 random chunks securely
+                const noiseMap = {};
+
+                // 4. Iterate over the circular grid
+                for (let y = 0; y < diameter; y++) {
+                    for (let x = 0; x < diameter; x++) {
+                        
+                        const dx = x + 0.5 - center;
+                        const dy = y + 0.5 - center;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist <= radius) {
+                            let isDark = false;
+
+                            const qx = x - offset;
+                            const qy = y - offset;
+
+                            // Check if we are inside the core QR code boundary
+                            if (qx >= 0 && qx < qrSize && qy >= 0 && qy < qrSize) {
+                                isDark = qr.isDark(qy, qx);
+                            } else {
+                                // We are outside the core. Safely calculate our 2x2 chunky noise
+                                const chunkX = Math.floor(x / 2);
+                                const chunkY = Math.floor(y / 2);
+                                const chunkKey = `${chunkX},${chunkY}`;
+                                
+                                // If this chunk hasn't been randomized yet, roll the dice (50% chance)
+                                if (noiseMap[chunkKey] === undefined) {
+                                    noiseMap[chunkKey] = Math.random() > 0.5;
+                                }
+                                
+                                isDark = noiseMap[chunkKey];
+                            }
+
+                            // If the module should be drawn, add it to the SVG path and Canvas
+                            if (isDark) {
+                                pathData += `M${x * cellSize},${y * cellSize} h${cellSize} v${cellSize} h-${cellSize} Z `;
+                                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                            }
+                        }
+                    }
+                }
+
+                // 5. Render outputs
+                currentSvgData = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diameter * cellSize} ${diameter * cellSize}" width="250" height="250">
+                    <path fill="#000000" d="${pathData}" />
+                </svg>`;
+
+                document.getElementById('svgPreview').innerHTML = currentSvgData;
+                document.getElementById('outputContainer').style.display = 'block';
+                currentCanvas = canvas;
+                
+            } catch (error) {
+                // Catch any silent failures and show them
+                alert("Oops! A generation error occurred: " + error.message);
+                console.error(error);
+            }
+        }
+
+        // Generate default on load
+        window.onload = generateQR;
+    </script>
+</body>
+</html>
