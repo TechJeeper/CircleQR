@@ -281,6 +281,29 @@
             }
         }
 
+        function downloadSVG() {
+            if (!currentSvgData) return;
+            const blob = new Blob([currentSvgData], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'round-qr-print.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadPNG() {
+            if (!currentCanvas) return;
+            const a = document.createElement('a');
+            a.href = currentCanvas.toDataURL("image/png");
+            a.download = 'round-qr-print.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
         // Generate default on load
         window.onload = generateQR;
     </script>
