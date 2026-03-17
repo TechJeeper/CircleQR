@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Round QR Code Generator</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --panel-color: #2a2a3e;
+            --text-color: #cdd6f4;
+            --accent-color: #89b4fa;
+            --button-hover: #b4befe;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+            margin: 0;
+        }
+
+        .container {
+            background-color: var(--panel-color);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        input[type="text"] {
+            width: 80%;
+            padding: 10px;
+            margin-bottom: 1rem;
+            border: 1px solid #45475a;
+            border-radius: 6px;
+            background: #181825;
+            color: #fff;
+            font-size: 1rem;
+        }
+
+        button {
+            background-color: var(--accent-color);
+            color: #11111b;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--button-hover);
+        }
+
+        /* Checkerboard background to demonstrate transparency */
+        .preview-wrapper {
+            margin: 20px auto;
+            display: inline-block;
+            padding: 20px;
+            border-radius: 8px;
+            background-image: 
+                linear-gradient(45deg, #e0e0e0 25%, transparent 25%), 
+                linear-gradient(-45deg, #e0e0e0 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #e0e0e0 75%), 
+                linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            background-color: #ffffff;
+        }
+
+        svg {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .actions {
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Round QR Code Generator</h2>
+        <input type="text" id="urlInput" placeholder="Enter URL (e.g., https://example.com)" value="https://example.com" />
+        <br>
+        <button onclick="generateQR()">Generate</button>
+
+        <div id="outputContainer" style="display: none;">
+            <div class="preview-wrapper" id="svgPreview"></div>
+            <div class="actions">
+                <button onclick="downloadSVG()">Download SVG</button>
+                <button onclick="downloadPNG()">Download PNG</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSvgData = "";
+        let currentCanvas = null;
+
+        function generateQR() {
+            const url = document.getElementById('urlInput').value.trim() || 'https://example.com';
+
+            // 1. Generate the core QR code matrix
+            // Error correction 'H' (High) is good here so it remains readable even if printed small
+            const qr = qrcode(0, 'H'); 
+            qr.addData(url);
+            qr.make();
+
+            const qrSize = qr.getModuleCount();
+            
+            // Standard QR codes require a "quiet zone" of at least 4 modules around the edge
+            // to ensure scanners can isolate the finder patterns.
+            const quietZone = 4;
+            const coreSize = qrSize + (quietZone * 2);
+
+            // 2. Calculate bounds for the surrounding circle
+            // The circle diameter must be large enough to completely encompass the square core.
+            const radius = Math.ceil((coreSize * Math.sqrt(2)) / 2) + 1; 
+            const diameter = radius * 2;
+            const center = radius;
+
+            // Offset to center the square QR code inside the circular grid
+            const offset = Math.floor((diameter - coreSize) / 2);
+
+            let pathData = "";
+            const cellSize = 10; // Scaling factor for crisp SVG rendering
+
+            // Setup hidden canvas for PNG export
+            const canvas = document.createElement('canvas');
+            canvas.width = diameter * cellSize;
+            canvas.height = diameter * cellSize;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = "#000000"; 
+
+            // 3. Iterate over the new, larger circular grid
+            for (let y = 0; y < diameter; y++) {
+                for (let x = 0; x < diameter; x++) {
+                    
+                    // Calculate distance from center to determine if module is inside the circle
+                    const dx = x + 0.5 - center;
+                    const dy = y + 0.5 - center;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist <= radius) {
+                        let isDark = false;
+
+                        // Check if we are inside the core QR code boundary (including its quiet zone)
+                        if (x >= offset && x < offset + coreSize && 
+                            y >= offset && y < offset + coreSize) {
+                            
+                            // Map grid coordinates back to the original QR matrix coordinates
+                            const qx = x - offset - quietZone;
+                            const qy = y - offset - quietZone;
+
+                            if (qx >= 0 && qx < qrSize && qy >= 0 && qy < qrSize) {
+                                isDark = qr.isDark(qy, qx);
+                            } else {
+                                // We are in the quiet zone, leave it fully transparent
+                                isDark = false;
+                            }
+                        } else {
+                            // We are outside the core, but inside the circle. Generate random noise!
+                            // Using > 0.5 roughly matches the dark/light ratio of a real QR code
+                            isDark = Math.random() > 0.5;
+                        }
+
+                        // If the module should be drawn, add it to the SVG path and Canvas
+                        if (isDark) {
+                            // SVG path: Move to (x,y), draw horizontal, vertical, back, and close.
+                            pathData += `M${x * cellSize},${y * cellSize} h${cellSize} v${cellSize} h-${cellSize} Z `;
+                            
+                            // Canvas: Fill rectangle
+                            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                        }
+                    }
+                }
+            }
+
+            // 4. Render outputs
+            // Notice there is no background <rect>, making the SVG transparent by default
+            currentSvgData = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diameter * cellSize} ${diameter * cellSize}" width="250" height="250">
+                <path fill="#000000" d="${pathData}" />
+            </svg>`;
+
+            document.getElementById('svgPreview').innerHTML = currentSvgData;
+            document.getElementById('outputContainer').style.display = 'block';
+            currentCanvas = canvas;
+        }
+
+        function downloadSVG() {
+            if (!currentSvgData) return;
+            const blob = new Blob([currentSvgData], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'round-qr.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadPNG() {
+            if (!currentCanvas) return;
+            const a = document.createElement('a');
+            a.href = currentCanvas.toDataURL("image/png");
+            a.download = 'round-qr.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        // Generate default on load
+        window.onload = generateQR;
+    </script>
+</body>
+</html>
